@@ -1,0 +1,139 @@
+globals:
+  - id: fan_speed #通电默认转速设定
+    type: int
+    #restore_value: yes #是否保存上次离线转速，默认关闭
+    initial_value: '100' #默认100满转速，可自行设置。
+  - id: speed_or # 通电默认转速计算用
+    type: float
+
+esphome:
+  name: bat-fan-test
+  friendly_name: Bat FAN 60
+  on_boot:   
+    priority: -100.0
+    then:
+      - lambda: |
+          auto speed_or = (float) id(fan_speed);
+          auto call1 = id(fan1).make_call();
+          call1.set_speed(speed_or);
+          call1.perform();
+          auto call2 = id(fan2).make_call();
+          call2.set_speed(speed_or);
+          call2.perform();
+
+esp8266:
+  board: nodemcuv2
+
+# Enable logging
+logger:
+  #level: INFO #级别自行调整，默认注释掉这行使用debug模式
+api:
+  encryption:
+    key: "r0fzmHDV464FmOmamMkYYZJq4bBEhiO2z84Cqg07ZW0="
+
+ota:
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Esphome-Web-D9A6Ec"
+    password: "ACGwLoeVb7FP"
+mqtt:
+  broker: !secret mqtt_broker
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+  keepalive: 60s
+captive_portal:
+    
+sensor:
+  - platform: adc
+    pin: A0
+    name: "battery_voltage"
+    update_interval: 1s
+    accuracy_decimals: 2
+    filters:
+      - multiply: 73.0904 # 需要自己测试调整
+      - median:  # 时间调整 
+          window_size: 10
+          send_every: 5
+          send_first_at: 1
+         
+# 风扇转速采集
+  - platform: pulse_counter
+    pin: 
+      number: D1 # 测速信号接入引脚
+      mode: INPUT_PULLUP # 设置模式为输入
+    name: "风扇转速1"
+    id: fan_rpm1
+    update_interval: 1s
+    unit_of_measurement: "RPM"
+    filters:
+      - multiply: 0.5  # 每秒脉冲数转换为每分钟转速
+
+  - platform: pulse_counter
+    pin: 
+      number: D2 # 测速信号接入引脚
+      mode: INPUT_PULLUP  # 设置模式为输入
+    name: "风扇转速2"
+    id: fan_rpm2
+    update_interval: 1s
+    unit_of_measurement: "RPM"
+    filters:
+      - multiply: 0.5  # 每秒脉冲数转换为每分钟转速
+
+# PWM调速输出
+output:
+  - platform: esp8266_pwm
+    pin: D5  # PWM信号输出引脚
+    frequency: 25000 Hz  # 调整频率为风扇兼容的25kHz
+    id: pwm_output1
+  - platform: esp8266_pwm
+    pin: D6  # PWM信号输出引脚
+    frequency: 25000 Hz  # 调整频率为风扇兼容的25kHz
+    id: pwm_output2
+
+fan: #单风扇调整
+  - platform: speed
+    output: pwm_output1
+    name: "风扇输出1"
+    id: fan1
+    restore_mode: ALWAYS_ON #默认启动
+
+  - platform: speed
+    output: pwm_output2
+    name: "风扇输出2"
+    id: fan2
+    restore_mode: ALWAYS_ON #默认启动
+
+number: #同时调整两个风扇的转速
+  - platform: template
+    name: "风扇同步控制"
+    min_value: 50  #限制最小值
+    max_value: 100 #限制最大值
+    step: 10  #调整步长
+    unit_of_measurement: "%"
+    optimistic: true
+    set_action:
+      - lambda: |
+          id(fan_speed) = (int)(x);
+          auto speed_percent = (float) id(fan_speed);
+          auto call1 = id(fan1).make_call();
+          call1.set_speed(speed_percent);
+          call1.perform();
+          auto call2 = id(fan2).make_call();
+          call2.set_speed(speed_percent);
+          call2.perform();
+##以下是睡眠模式，请不要配置，除非你只用来采集电压
+#deep_sleep:
+ # run_duration: 60s 
+  #sleep_duration: 5s
+##以下是说明：
+#fan_speed ：
+    #restore_value: yes #是否保存上次离线转速，默认关闭，如果开启请点击风扇进去看设备实际转速，"风扇同步控制"滑块不会同步当前转速百分比。
+    #initial_value: '100' #默认100满转速，可自行设置。建议50，因为有的风扇可能是反的，100是停转，请自行确认
+#fan1、fan2
+#如果你使用了单风扇调整功能，您单风扇的值不会同步到"风扇同步控制"滑块。
